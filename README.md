@@ -1,5 +1,4 @@
-PyExplorer 🚀
-PyExplorer is a lightweight and intuitive remote file explorer specifically designed for Raspberry Pi. Built with Python and PyQt6, it allows you to manage your remote files as if they were on your local machine.
+🚀PyExplorer is a lightweight and intuitive remote file explorer specifically designed for Raspberry Pi. Built with Python and PyQt6, it allows you to manage your remote files as if they were on your local machine.
 
 🌟 Features
 Device Management: Save multiple Raspberry Pi connections with aliases, IP addresses, and credentials.
