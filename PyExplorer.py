@@ -19,7 +19,7 @@ CONFIG_FILE = "connessioni_raspberry.json"
 class PyExplorer(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("PyExplorer - Pro")
+        self.setWindowTitle("PyExplorer")
         self.setGeometry(100, 100, 1150, 650)
 
         # Impostazione Icona
@@ -347,3 +347,4 @@ if __name__ == "__main__":
     window = PyExplorer()
     window.show()
     app.exec()
+
