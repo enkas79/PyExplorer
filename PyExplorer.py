@@ -5,22 +5,25 @@ import stat
 import tempfile
 import platform
 import subprocess
+import posixpath  # Fondamentale per la compatibilità Windows -> Raspberry
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout,
                              QPushButton, QLineEdit, QListWidget, QWidget, QMessageBox,
                              QFileDialog, QLabel, QFrame, QMenu)
-from PyQt6.QtGui import QAction
+from PyQt6.QtGui import QAction, QIcon
 from PyQt6.QtCore import Qt, QPoint
-from PyQt6.QtGui import QIcon
 
+# Configurazione file salvataggi
 CONFIG_FILE = "connessioni_raspberry.json"
 
 
 class PyExplorer(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowIcon(QIcon("icon.png"))
-        self.setWindowTitle("PyExplorer")
+        self.setWindowTitle("PyExplorer - Pro")
         self.setGeometry(100, 100, 1150, 650)
+
+        # Impostazione Icona
+        self.setWindowIcon(QIcon("icon.png"))
 
         # --- SISTEMA DI TRADUZIONE ---
         self.current_lang = "it"
@@ -60,7 +63,7 @@ class PyExplorer(QMainWindow):
             },
             "es": {
                 "nome": "Nombre:", "host": "Host:", "user": "Usuario:", "pass": "Pass:",
-                "salva": "💾 Guardar", "connetti": "⚡ Conectar", "dispositivi": "<b>Dispositivos:</b>",
+                "salva": "💾 Guardar", "connetti": "⚡ Conectar", "dispositivos": "<b>Dispositivos:</b>",
                 "elimina_disp": "🗑️ Eliminar", "su": "⬅ Subir", "esci": "🚪 Salir",
                 "info": "Info", "lingua": "Idioma", "aiuto": "Ayuda",
                 "percorso": "Ruta:", "pronto": "Listo.", "connesso": "Conectado.",
@@ -78,12 +81,10 @@ class PyExplorer(QMainWindow):
 
         self.initUI()
         self.create_menu_bar()
-        self.retranslate_ui()  # Applica la lingua iniziale
+        self.retranslate_ui()
 
     def create_menu_bar(self):
         menubar = self.menuBar()
-
-        # Menu Lingua
         self.menu_lingua = menubar.addMenu("Lingua")
         langs = [("Italiano", "it"), ("English", "en"), ("Deutsch", "de"), ("Español", "es")]
         for name, code in langs:
@@ -91,7 +92,6 @@ class PyExplorer(QMainWindow):
             action.triggered.connect(lambda checked, c=code: self.change_language(c))
             self.menu_lingua.addAction(action)
 
-        # Menu Aiuto
         self.menu_aiuto = menubar.addMenu("Aiuto")
         self.info_action = QAction("Info", self)
         self.info_action.triggered.connect(self.show_info)
@@ -102,10 +102,7 @@ class PyExplorer(QMainWindow):
         self.retranslate_ui()
 
     def retranslate_ui(self):
-        """Aggiorna tutti i testi dell'interfaccia basandosi sulla lingua scelta."""
         t = self.texts[self.current_lang]
-
-        # Labels e Button
         self.label_nome.setText(t["nome"])
         self.label_user.setText(t["user"])
         self.label_pass.setText(t["pass"])
@@ -117,8 +114,6 @@ class PyExplorer(QMainWindow):
         self.btn_exit.setText(t["esci"])
         self.status_bar.setText(t["pronto"])
         self.path_label.setText(f"{t['percorso']} {self.current_remote_path}")
-
-        # Menu
         self.menu_lingua.setTitle(t["lingua"])
         self.menu_aiuto.setTitle(t["aiuto"])
         self.info_action.setText(t["info"])
@@ -132,7 +127,6 @@ class PyExplorer(QMainWindow):
         self.setCentralWidget(central_widget)
         layout_principale = QVBoxLayout(central_widget)
 
-        # BARRA SUPERIORE
         toolbar_layout = QHBoxLayout()
         self.label_nome = QLabel()
         self.alias_input = QLineEdit()
@@ -162,9 +156,10 @@ class PyExplorer(QMainWindow):
         toolbar_layout.addWidget(self.btn_connect)
         layout_principale.addLayout(toolbar_layout)
 
-        layout_principale.addWidget(self.get_line())
+        line = QFrame();
+        line.setFrameShape(QFrame.Shape.HLine);
+        layout_principale.addWidget(line)
 
-        # CORPO CENTRALE
         content_layout = QHBoxLayout()
         sidebar_layout = QVBoxLayout()
         self.label_devices = QLabel()
@@ -199,7 +194,6 @@ class PyExplorer(QMainWindow):
         content_layout.addLayout(explorer_layout)
         layout_principale.addLayout(content_layout)
 
-        # BARRA INFERIORE
         bottom_row = QHBoxLayout()
         self.status_bar = QLabel()
         bottom_row.addWidget(self.status_bar)
@@ -209,12 +203,6 @@ class PyExplorer(QMainWindow):
         self.btn_exit.setStyleSheet("background-color: #C62828; color: white;")
         bottom_row.addWidget(self.btn_exit)
         layout_principale.addLayout(bottom_row)
-
-    def get_line(self):
-        line = QFrame();
-        line.setFrameShape(QFrame.Shape.HLine);
-        line.setFrameShadow(QFrame.Shadow.Sunken)
-        return line
 
     def show_context_menu(self, pos: QPoint):
         item = self.file_list.itemAt(pos)
@@ -229,7 +217,8 @@ class PyExplorer(QMainWindow):
                 self.handle_item_click(item)
             elif action == act_down:
                 rn = item.text().replace("📁 ", "").replace("📄 ", "")
-                self.start_download(os.path.join(self.current_remote_path, rn), rn)
+                # Uso posixpath per il Raspberry
+                self.start_download(posixpath.join(self.current_remote_path, rn), rn)
             elif action == act_del:
                 self.delete_remote_item(item)
         else:
@@ -241,10 +230,10 @@ class PyExplorer(QMainWindow):
             elif action == act_ref:
                 self.refresh_file_list()
 
-    # --- LOGICHE (Semplificate per brevità, invariate rispetto a prima) ---
     def handle_item_click(self, item):
         rn = item.text().replace("📁 ", "").replace("📄 ", "")
-        rp = os.path.join(self.current_remote_path, rn)
+        # Correzione fondamentale: posixpath.join per il remote
+        rp = posixpath.join(self.current_remote_path, rn)
         try:
             if stat.S_ISDIR(self.sftp_client.stat(rp).st_mode):
                 self.current_remote_path = rp
@@ -256,6 +245,7 @@ class PyExplorer(QMainWindow):
 
     def open_remote_file(self, rp, fn):
         try:
+            # Local path usa os.path (specifico per il PC), Remote usa posixpath
             tp = os.path.join(tempfile.gettempdir(), fn)
             self.sftp_client.get(rp, tp)
             if platform.system() == "Windows":
@@ -267,18 +257,22 @@ class PyExplorer(QMainWindow):
 
     def start_upload(self):
         lp, _ = QFileDialog.getOpenFileName(self, "Select File")
-        if lp: self.sftp_client.put(lp, os.path.join(self.current_remote_path,
-                                                     os.path.basename(lp))); self.refresh_file_list()
+        if lp:
+            # posixpath per la destinazione
+            remote_dest = posixpath.join(self.current_remote_path, os.path.basename(lp))
+            self.sftp_client.put(lp, remote_dest)
+            self.refresh_file_list()
 
     def delete_remote_item(self, item):
         t = self.texts[self.current_lang]
         rn = item.text().replace("📁 ", "").replace("📄 ", "")
+        rp = posixpath.join(self.current_remote_path, rn)
         if QMessageBox.question(self, "PyExplorer", f"{t['conf_del']} ({rn})") == QMessageBox.StandardButton.Yes:
             try:
                 if "📁" in item.text():
-                    self.sftp_client.rmdir(os.path.join(self.current_remote_path, rn))
+                    self.sftp_client.rmdir(rp)
                 else:
-                    self.sftp_client.remove(os.path.join(self.current_remote_path, rn))
+                    self.sftp_client.remove(rp)
                 self.refresh_file_list()
             except:
                 pass
@@ -339,7 +333,8 @@ class PyExplorer(QMainWindow):
 
     def go_to_parent(self):
         if self.current_remote_path == "/": return
-        self.current_remote_path = os.path.dirname(self.current_remote_path) or "/"
+        # Correzione navigazione "Su": posixpath per il percorso remoto
+        self.current_remote_path = posixpath.dirname(self.current_remote_path) or "/"
         self.refresh_file_list()
 
     def start_download(self, rp, fn):
