@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout
                              QFileDialog, QLabel, QFrame, QMenu)
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt, QPoint
+from PyQt6.QtGui import QIcon
 
 CONFIG_FILE = "connessioni_raspberry.json"
 
@@ -17,6 +18,7 @@ CONFIG_FILE = "connessioni_raspberry.json"
 class PyExplorer(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.setWindowIcon(QIcon("icon.png"))
         self.setWindowTitle("PyExplorer")
         self.setGeometry(100, 100, 1150, 650)
 
