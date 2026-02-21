@@ -1,0 +1,33 @@
+name: Build PyExplorer Windows EXE
+
+on:
+  push:
+    branches: [ main ] # Si avvia ogni volta che carichi qualcosa su main
+
+jobs:
+  build:
+    runs-on: windows-latest # Usa un PC Windows virtuale
+
+    steps:
+    - name: Checkout del codice
+      uses: actions/checkout@v4
+
+    - name: Installazione Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Installazione Librerie
+      run: |
+        pip install PyQt6 paramiko pyinstaller
+
+    - name: Creazione EXE con PyInstaller
+      # Usiamo i parametri --onefile e --noconsole come nel tuo script
+      run: |
+        pyinstaller --onefile --noconsole --icon=icon.png --name=PyExplorer PyExplorer.py
+
+    - name: Archiviazione Risultato
+      uses: actions/upload-artifact@v4
+      with:
+        name: PyExplorer-Windows-Binary
+        path: dist/PyExplorer.exe
