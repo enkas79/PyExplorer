@@ -17,7 +17,7 @@ Delete: Manage remote storage directly from the UI.
 
 Context Menu: Right-click support for all major file operations.
 
-Multi-language Support: Available in English, Italian, German, and Spanish.
+Multi-language Support: Available in English, Italian.
 
 🛠️ Requirements
 To run PyExplorer, you need Python installed on your system along with the following libraries:
