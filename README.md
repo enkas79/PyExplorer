@@ -41,7 +41,7 @@ Enrico Martini - Lead Developer
 GitHub: enkas79
 
 📝 Version
-Current Version: 1.0.2
+Current Version: 1.0.3
 
 📄 License
 This project is licensed under the MIT License.
