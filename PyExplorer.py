@@ -15,10 +15,10 @@ from PyQt6.QtGui import QAction, QIcon
 from PyQt6.QtCore import Qt, QPoint
 
 # Metadati e Configurazione
-VERSION = "1.0.2"  # Incrementata versione per la nuova feature
+VERSION = "1.0.3"
 REPO_OWNER = "enkas79"
 REPO_NAME = "PyExplorer"
-CONFIG_FILE = "connessioni_raspberry.json"
+CONFIG_FILE = "raspberry_connections.json"
 
 
 class PyExplorer(QMainWindow):
@@ -35,7 +35,7 @@ class PyExplorer(QMainWindow):
         self.sftp_client = None
         self.current_remote_path = "/home"
 
-        # Dizionario Traduzioni
+        # Dizionario Traduzioni Aggiornato
         self.current_lang = "it"
         self.texts = {
             "it": {
@@ -43,6 +43,7 @@ class PyExplorer(QMainWindow):
                 "salva": "💾 Salva", "connetti": "⚡ Connetti", "dispositivi": "<b>Dispositivi:</b>",
                 "elimina_disp": "🗑️ Elimina", "su": "⬅ Su", "esci": "🚪 Esci",
                 "info": "Info", "lingua": "Lingua", "aiuto": "Aiuto",
+                "aggiorna_menu": "🔄 Cerca aggiornamenti", # Nuova voce
                 "percorso": "Percorso:", "pronto": "Pronto.", "connesso": "Connesso.",
                 "apri": "👁️ Apri/Modifica", "scarica": "⬇️ Scarica", "elimina_file": "❌ Elimina",
                 "carica": "⬆️ Carica file qui", "aggiorna": "🔄 Aggiorna",
@@ -57,6 +58,7 @@ class PyExplorer(QMainWindow):
                 "salva": "💾 Save", "connetti": "⚡ Connect", "dispositivi": "<b>Devices:</b>",
                 "elimina_disp": "🗑️ Delete", "su": "⬅ Up", "esci": "🚪 Exit",
                 "info": "Info", "lingua": "Language", "aiuto": "Help",
+                "aggiorna_menu": "🔄 Check for updates", # Nuova voce
                 "percorso": "Path:", "pronto": "Ready.", "connesso": "Connected.",
                 "apri": "👁️ Open/Edit", "scarica": "⬇️ Download", "elimina_file": "❌ Delete",
                 "carica": "⬆️ Upload file here", "aggiorna": "🔄 Refresh",
@@ -66,7 +68,6 @@ class PyExplorer(QMainWindow):
                 "edit_msg": "Finished editing? Save in the editor and click YES to update the Raspberry.",
                 "up_ok": "✅ File updated!", "no_mod": "No changes detected."
             }
-            # Puoi aggiungere le altre lingue seguendo questo schema
         }
 
         self.saved_connections = self.load_connections()
@@ -224,12 +225,23 @@ class PyExplorer(QMainWindow):
 
     def create_menu_bar(self):
         m = self.menuBar()
+        
+        # Menu Lingua
         self.menu_lingua = m.addMenu("Lingua")
         for n, c in [("Italiano", "it"), ("English", "en")]:
             a = QAction(n, self)
             a.triggered.connect(lambda ch, code=c: self.change_language(code))
             self.menu_lingua.addAction(a)
+            
+        # Menu Aiuto
         self.menu_aiuto = m.addMenu("Aiuto")
+        
+        # Voce Cerca Aggiornamenti
+        self.update_action = QAction("Cerca aggiornamenti", self)
+        self.update_action.triggered.connect(self.check_for_updates)
+        self.menu_aiuto.addAction(self.update_action)
+        
+        # Voce Info
         self.info_action = QAction("Info", self)
         self.info_action.triggered.connect(self.show_info)
         self.menu_aiuto.addAction(self.info_action)
@@ -254,6 +266,7 @@ class PyExplorer(QMainWindow):
         self.menu_lingua.setTitle(t["lingua"])
         self.menu_aiuto.setTitle(t["aiuto"])
         self.info_action.setText(t["info"])
+        self.update_action.setText(t["aggiorna_menu"]) # Traduzione dinamica aggiornamenti
 
     # --- SFTP LOGIC ---
     def connect_to_raspberry(self):
@@ -290,7 +303,7 @@ class PyExplorer(QMainWindow):
         except:
             pass
 
-    # --- NUOVA LOGICA DI MODIFICA E SALVATAGGIO ---
+    # --- LOGICA DI MODIFICA E SALVATAGGIO ---
     def open_remote_file(self, rp, fn):
         """Scarica il file, lo apre per la modifica e lo salva se cambiato."""
         try:
