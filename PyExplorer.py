@@ -23,7 +23,7 @@ from PyQt6.QtCore import Qt, QPoint
 
 # Costanti
 CONFIG_FILE = "connessioni_raspberry.json"
-VERSION = "0.0.1"
+VERSION = "1.0.4"
 AUTHOR = "Enrico Martini"
 
 
