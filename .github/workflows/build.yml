@@ -1,0 +1,178 @@
+name: Build PyExplorer (Windows & Linux)
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  # ==========================================
+  # JOB 1: BUILD PER WINDOWS (.exe)
+  # ==========================================
+  build-windows:
+    runs-on: windows-latest
+    steps:
+    - name: Checkout del codice
+      uses: actions/checkout@v4
+
+    - name: Leggi la versione (Fallback a 1.0.0 se non esiste)
+      shell: bash
+      run: |
+        if [ -f "version.txt" ]; then
+          VERSION=$(cat version.txt)
+        else
+          VERSION="1.0.0"
+        fi
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+    - name: Installazione Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Installazione Librerie
+      run: |
+        python -m pip install --upgrade pip
+        pip install PyQt6 paramiko pyinstaller requests
+
+    - name: Creazione EXE con PyInstaller (Bypass Icona se assente)
+      shell: bash
+      run: |
+        ICON_ARGS=""
+        if [ -f "icon.png" ]; then
+          ICON_ARGS="--icon=icon.png"
+          echo "Trovata icon.png: la aggiungo alla build."
+        elif [ -f "icon.ico" ]; then
+          ICON_ARGS="--icon=icon.ico"
+          echo "Trovata icon.ico: la aggiungo alla build."
+        else
+          echo "Nessuna icona trovata: eseguo la build standard senza icona."
+        fi
+        pyinstaller --onefile --noconsole --name=PyExplorer $ICON_ARGS PyExplorer.py
+
+    - name: Archiviazione Risultato (Artifact)
+      uses: actions/upload-artifact@v4
+      with:
+        name: PyExplorer_Windows_v${{ env.VERSION }}
+        path: dist/PyExplorer.exe
+
+    - name: Pubblica la Release su GitHub (Windows)
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: v${{ env.VERSION }}
+        name: PyExplorer v${{ env.VERSION }}
+        files: dist/PyExplorer.exe
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+
+  # ==========================================
+  # JOB 2: BUILD PER LINUX (.deb)
+  # ==========================================
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout del codice
+      uses: actions/checkout@v4
+
+    - name: Leggi la versione (Fallback a 1.0.0 se non esiste)
+      shell: bash
+      run: |
+        if [ -f "version.txt" ]; then
+          VERSION=$(cat version.txt)
+        else
+          VERSION="1.0.0"
+        fi
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+    - name: Installazione dipendenze di sistema
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y python3-pip python3-dev build-essential binutils imagemagick dpkg-dev
+
+    - name: Installazione Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Installazione Librerie Python
+      run: |
+        python -m pip install --upgrade pip
+        pip install PyQt6 paramiko pyinstaller requests
+
+    - name: Creazione Eseguibile Linux (Bypass Icona se assente)
+      shell: bash
+      run: |
+        ICON_ARGS=""
+        if [ -f "icon.png" ]; then
+          ICON_ARGS="--icon=icon.png"
+        elif [ -f "icon.ico" ]; then
+          ICON_ARGS="--icon=icon.ico"
+        fi
+        pyinstaller --onefile --windowed --name=pyexplorer $ICON_ARGS PyExplorer.py
+
+    - name: Preparazione Struttura e Generazione .deb
+      shell: bash
+      run: |
+        VERSION=${{ env.VERSION }}
+        DEB_DIR="pkg"
+        
+        # 1. Crea la struttura delle cartelle
+        mkdir -p $DEB_DIR/usr/bin
+        mkdir -p $DEB_DIR/usr/share/applications
+        mkdir -p $DEB_DIR/usr/share/pixmaps
+        mkdir -p $DEB_DIR/DEBIAN
+
+        # 2. Copia l'eseguibile
+        cp dist/pyexplorer $DEB_DIR/usr/bin/
+        chmod +x $DEB_DIR/usr/bin/pyexplorer
+
+        # 3. Gestione dinamica dell'icona (bypassa se non c'è)
+        ICON_LINE=""
+        if [ -f "icon.png" ]; then
+          cp icon.png $DEB_DIR/usr/share/pixmaps/pyexplorer.png
+          ICON_LINE="Icon=/usr/share/pixmaps/pyexplorer.png"
+        elif [ -f "icon.ico" ]; then
+          convert icon.ico[0] $DEB_DIR/usr/share/pixmaps/pyexplorer.png || echo "Conversione icona fallita, procedo senza."
+          ICON_LINE="Icon=/usr/share/pixmaps/pyexplorer.png"
+        fi
+
+        # 4. Crea il file di controllo (metadata del pacchetto)
+        cat <<EOF > $DEB_DIR/DEBIAN/control
+        Package: pyexplorer
+        Version: ${VERSION}
+        Section: utils
+        Priority: optional
+        Architecture: amd64
+        Maintainer: Enrico Martini
+        Description: Remote file explorer for Raspberry Pi.
+        EOF
+
+        # 5. Crea il file .desktop per il menu applicazioni
+        cat <<EOF > $DEB_DIR/usr/share/applications/pyexplorer.desktop
+        [Desktop Entry]
+        Version=${VERSION}
+        Name=PyExplorer
+        Exec=/usr/bin/pyexplorer
+        ${ICON_LINE}
+        Type=Application
+        Categories=Utility;Development;
+        Terminal=false
+        EOF
+
+        # 6. Compila il pacchetto .deb
+        dpkg-deb --build $DEB_DIR PyExplorer_v${VERSION}_amd64.deb
+
+    - name: Pubblica la Release su GitHub (Linux)
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: v${{ env.VERSION }}
+        files: PyExplorer_v${{ env.VERSION }}_amd64.deb
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
