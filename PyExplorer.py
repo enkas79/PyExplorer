@@ -397,7 +397,7 @@ class MainWindow(QMainWindow):
         """
         if av and QMessageBox.question(self, "Update", f"v{v} disponibile. Scaricare?") == QMessageBox.StandardButton.Yes: 
             # Definiamo l'URL del tuo sito web
-            sito_download = "https://mindnetwork.vip" 
+            sito_download = "https://mindnetwork.vip/download" 
             
             # Apriamo il browser dell'utente direttamente sul tuo portale
             QDesktopServices.openUrl(QUrl(sito_download))
