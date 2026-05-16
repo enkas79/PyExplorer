@@ -391,8 +391,18 @@ class MainWindow(QMainWindow):
         self.w = UpdateWorker(); self.w.finished.connect(lambda a,v,u: self._on_upd(a,v,u,silent)); self.w.start()
 
     def _on_upd(self, av: bool, v: str, u: str, s: bool) -> None:
-        if av and QMessageBox.question(self, "Update", f"v{v} disponibile. Scaricare?") == QMessageBox.StandardButton.Yes: QDesktopServices.openUrl(QUrl(u))
-        elif not s: QMessageBox.information(self, "Update", "Sei all'ultima versione.")
+        """
+        Gestisce la risposta del controllo aggiornamenti.
+        Se viene trovato un update, reindirizza l'utente alla sezione download del sito.
+        """
+        if av and QMessageBox.question(self, "Update", f"v{v} disponibile. Scaricare?") == QMessageBox.StandardButton.Yes: 
+            # Definiamo l'URL del tuo sito web
+            sito_download = "https://mindnetwork.vip" 
+            
+            # Apriamo il browser dell'utente direttamente sul tuo portale
+            QDesktopServices.openUrl(QUrl(sito_download))
+        elif not s: 
+            QMessageBox.information(self, "Update", "Sei all'ultima versione.")
 
     def closeEvent(self, e) -> None:
         self.sftp_manager.disconnect(); e.accept()
