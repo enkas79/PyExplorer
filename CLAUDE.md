@@ -1,7 +1,7 @@
 # Guidelines per Claude Code
 
 ## 1. Stack e Contesto Principale
-* **Linguaggio Principale:** Python 3.11+ (Focus assoluto).
+* **Linguaggio Principale:** Python 3.9+ (Focus assoluto).
 * **Framework GUI:** Esclusivamente **PyQt6** o **PySide6** (Non usare Tkinter, CustomTkinter o altri framework).
 * **Controllo Versione & CI/CD:** GitHub Actions (Build ed esecutabili multi-piattaforma generati da PyInstaller / NSIS).
 * **Linguaggi Secondari (uso RARO):** PHP, JavaScript, Java. Usali solo se esplicitamente richiesto per integrazioni esterne.
@@ -28,14 +28,21 @@
 * **Gestione Errori:** Intercetta le eccezioni di rete o di I/O (es. assenza di connessione durante l'autoupdate) silenziosamente in background o tramite dialoghi chiari (`QMessageBox.warning`/`QMessageBox.critical`) se l'aggiornamento è stato richiesto manualmente, senza far crashare l'applicazione.
 
 ## 5. Comandi di Sviluppo & Test
-* **Esecuzione App:** `python PyExplorer.py`
+* **Esecuzione App:** `python src/main.py`
 * **Test Suite:** `pytest`
-* **Linter / Formatting:** `ruff check . --fix`
+* **Linter / Formatting:** `ruff check . --fix` (in alternativa `black .` / `flake8 .`)
 * **Dipendenze:** `pip freeze > requirements.txt`
 
 ## 6. Regole Operative per l'Agente
 * **Lingua:** Rispondi e inserisci commenti nel codice sempre in **italiano**.
 * **Stile Risposte:** Sii sintetico e diretto. Vai subito al codice e ai comandi, evitando preamboli teorici o spiegazioni prolisse.
 * **Autonomia e Versionamento:** Ricordati di aggiornare `version.txt` a ogni modifica rilevante ai file di progetto per garantire che la release su GitHub venga generata correttamente.
-* **Gestione Git e Branch:** Una volta creato il branch e completate le modifiche, procedi direttamente al push/merge nel branch principale (`main`/`master`) in piena autonomia, senza richiedere conferme.
-* **Pulizia Repo:** Non creare file di spazzatura, note `.md` extra o backup nella repository a meno che non sia io a chiederlo esplicitamente.
+* **Gestione Git e Branch:** Una volta creato il branch e completate le modifiche, procedi direttamente al push/merge nel branch `main` in piena autonomia, senza richiedere conferme.
+* **Pulizia Repo:** Non creare file spazzatura, note `.md` effimere o file di backup nel workspace a meno che non sia esplicitamente richiesto.
+
+## 7. Integrazione Plugin & Skill Attive
+* **claude-mem:** Salva contesto, bug risolti e decisioni architetturali direttamente nella memoria del plugin tra una sessione e l'altra. Non creare file markdown di riassunto nella repository.
+* **superpowers:** Prima di toccare codice o widget esistenti, definisci sempre il piano d'azione (file target, segnali/slot, asincronia con QThread) e procedi all'implementazione una volta verificata la coerenza con l'architettura.
+* **impeccable:** Applica i principi di design ed estetica visuale esclusivamente ai QSS (Qt Style Sheets), palette colori, spaziatura e tipografia dei componenti PyQt/PySide, evitando l'introduzione di pattern o tecnologie web.
+* **task-observer:** Monitora le correzioni e i workflow eseguiti per raffinare i comandi futuri senza richiedere conferme o generare log ridondanti.
+* **OmniRoute:** Se configurato come proxy per il fallback o modelli esterni, mantieni la compatibilità con le chiamate e le variabili d'ambiente standard definite.
