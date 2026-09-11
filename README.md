@@ -30,7 +30,7 @@ Clone the repository (or download the code).
 Run the application:
 
 Bash
-python PyExplorer.py
+python src/main.py
 Add a device: Enter a Name, IP, Username, and Password, then click Save.
 
 Connect: Select a device from the sidebar and hit Connect.

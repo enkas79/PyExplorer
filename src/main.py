@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QPushButton,
     QLineEdit, QListWidget, QWidget, QMessageBox, QFileDialog, QLabel,
     QFrame, QMenu, QListWidgetItem, QDialog, QTextBrowser, QDialogButtonBox,
-    QInputDialog, QPlainTextEdit, QSplitter
+    QInputDialog, QPlainTextEdit, QSplitter, QProgressDialog
 )
 from PyQt6.QtGui import QAction, QFont, QDesktopServices, QIcon
 from PyQt6.QtCore import Qt, QPoint, QThread, pyqtSignal, QUrl
@@ -33,7 +33,16 @@ import utils
 GITHUB_REPO: str = "enkas79/PyExplorer"
 AUTHOR: str = "Enrico Martini"
 CONFIG_FILE: str = "connessioni_raspberry.json"
-VERSION_FILE: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "version.txt")
+
+
+def _base_dir() -> str:
+    """Cartella base dell'applicazione: bundle PyInstaller oppure root del progetto (src/..)."""
+    if getattr(sys, "frozen", False):
+        return getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+VERSION_FILE: str = os.path.join(_base_dir(), "version.txt")
 
 
 def _read_version() -> str:
@@ -77,11 +86,11 @@ class SftpManager:
     def get_info(self, path: str) -> paramiko.SFTPAttributes:
         return self.sftp_client.stat(path)
 
-    def upload(self, local: str, remote: str) -> None:
-        self.sftp_client.put(local, remote)
+    def upload(self, local: str, remote: str, callback=None) -> None:
+        self.sftp_client.put(local, remote, callback=callback)
 
-    def download(self, remote: str, local: str) -> None:
-        self.sftp_client.get(remote, local)
+    def download(self, remote: str, local: str, callback=None) -> None:
+        self.sftp_client.get(remote, local, callback=callback)
 
     def download_batch(self, names: list[str], remote_dir: str, target_dir: str) -> None:
         for n in names:
@@ -180,6 +189,40 @@ class UpdateWorker(QThread):
                 self.finished.emit(False, "", "", f"Risposta inattesa dal server (HTTP {r.status_code}).")
         except Exception as e:
             self.finished.emit(False, "", "", str(e))
+
+
+class TaskWorker(QThread):
+    """Esegue in background una funzione senza argomenti (I/O SFTP, rete, ecc.)."""
+    succeeded = pyqtSignal(object)
+    failed = pyqtSignal(str)
+
+    def __init__(self, fn, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._fn = fn
+
+    def run(self) -> None:
+        try:
+            self.succeeded.emit(self._fn())
+        except Exception as e:
+            self.failed.emit(str(e))
+
+
+class TransferWorker(QThread):
+    """Esegue in background un trasferimento file riportando l'avanzamento."""
+    progress = pyqtSignal(str, int)
+    succeeded = pyqtSignal()
+    failed = pyqtSignal(str)
+
+    def __init__(self, fn, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._fn = fn
+
+    def run(self) -> None:
+        try:
+            self._fn(lambda label, pct: self.progress.emit(label, pct))
+            self.succeeded.emit()
+        except Exception as e:
+            self.failed.emit(str(e))
 
 
 # ==========================================
@@ -318,34 +361,99 @@ class MainWindow(QMainWindow):
     def _clear_conn_fields(self) -> None:
         for w in [self.txt_alias, self.txt_host, self.txt_user, self.txt_pass]: w.clear()
 
+    def _run_async(self, fn, on_success=None, on_error=None, busy_text: str = "Operazione in corso...") -> None:
+        """Esegue fn() in un QThread mostrando un dialogo di attesa indeterminato."""
+        dlg = QProgressDialog(busy_text, None, 0, 0, self)
+        dlg.setWindowTitle("Attendere")
+        dlg.setWindowModality(Qt.WindowModality.WindowModal)
+        dlg.setCancelButton(None)
+        dlg.setMinimumDuration(0)
+        dlg.show()
+
+        worker = TaskWorker(fn)
+        self._bg_worker = worker  # mantiene viva la referenza finché il thread gira
+
+        def _ok(result):
+            dlg.close()
+            if on_success: on_success(result)
+
+        def _err(msg: str):
+            dlg.close()
+            (on_error or (lambda m: QMessageBox.critical(self, "Errore", m)))(msg)
+
+        worker.succeeded.connect(_ok)
+        worker.failed.connect(_err)
+        worker.start()
+
+    def _run_transfer(self, task_fn, on_done=None, on_error=None) -> None:
+        """Esegue un trasferimento file in un QThread con progress bar determinata."""
+        dlg = QProgressDialog("Preparazione...", None, 0, 100, self)
+        dlg.setWindowTitle("Trasferimento in corso")
+        dlg.setWindowModality(Qt.WindowModality.WindowModal)
+        dlg.setCancelButton(None)
+        dlg.setMinimumDuration(0)
+        dlg.setValue(0)
+        dlg.show()
+
+        worker = TransferWorker(task_fn)
+        self._bg_worker = worker
+
+        def _progress(label: str, pct: int):
+            dlg.setLabelText(label); dlg.setValue(max(0, min(100, pct)))
+
+        def _ok():
+            dlg.close()
+            if on_done: on_done()
+
+        def _err(msg: str):
+            dlg.close()
+            (on_error or (lambda m: QMessageBox.critical(self, "Errore", f"Trasferimento fallito.\n{m}")))(msg)
+
+        worker.progress.connect(_progress)
+        worker.succeeded.connect(_ok)
+        worker.failed.connect(_err)
+        worker.start()
+
     def _toggle_connection(self) -> None:
         if self.btn_conn.text() == "Connetti":
-            try:
-                if self.sftp_manager.connect(self.txt_host.text(), self.txt_user.text(), self.txt_pass.text()):
-                    self.btn_conn.setText("Disconnetti"); self.btn_conn.setStyleSheet("background: #e67e22; color: white;")
-                    self.btn_up.setEnabled(True); self.btn_mk.setEnabled(True); self.refresh_list()
-            except Exception as e: QMessageBox.critical(self, "Errore", str(e))
+            host, user, psw = self.txt_host.text(), self.txt_user.text(), self.txt_pass.text()
+
+            def _do_connect():
+                return self.sftp_manager.connect(host, user, psw)
+
+            def _on_connected(_result):
+                self.btn_conn.setText("Disconnetti"); self.btn_conn.setStyleSheet("background: #e67e22; color: white;")
+                self.btn_up.setEnabled(True); self.btn_mk.setEnabled(True); self.refresh_list()
+
+            self._run_async(_do_connect, on_success=_on_connected, busy_text="Connessione in corso...")
         else:
             self.sftp_manager.disconnect(); self.btn_conn.setText("Connetti")
             self.btn_conn.setStyleSheet("background: #27ae60; color: white;")
             self.btn_up.setEnabled(False); self.btn_mk.setEnabled(False); self.file_list.clear()
 
     def refresh_list(self) -> None:
-        try:
+        path = self.sftp_manager.current_remote_path
+
+        def _fetch():
+            items = self.sftp_manager.list_dir(path)
+            items.sort(key=lambda x: (not stat.S_ISDIR(x.st_mode), x.filename.lower()))
+            return [(i.filename, stat.S_ISDIR(i.st_mode), utils.format_permissions(i.st_mode)) for i in items]
+
+        def _on_ok(rows):
             self.file_list.clear(); self.full_list_cache = []
-            path = self.sftp_manager.current_remote_path
             self.txt_path.setText(path)
             if path != "/":
                 item = QListWidgetItem("📁 .."); item.setData(Qt.ItemDataRole.UserRole, "..")
                 self.file_list.addItem(item)
-            items = self.sftp_manager.list_dir(path)
-            items.sort(key=lambda x: (not stat.S_ISDIR(x.st_mode), x.filename.lower()))
-            for i in items:
-                prefix = "📁 " if stat.S_ISDIR(i.st_mode) else "📄 "
-                li = QListWidgetItem(f"{prefix}{i.filename} [{utils.format_permissions(i.st_mode)}]")
-                li.setData(Qt.ItemDataRole.UserRole, i.filename)
+            for filename, is_dir, perms in rows:
+                prefix = "📁 " if is_dir else "📄 "
+                li = QListWidgetItem(f"{prefix}{filename} [{perms}]")
+                li.setData(Qt.ItemDataRole.UserRole, filename)
                 self.file_list.addItem(li); self.full_list_cache.append(li)
-        except Exception as e: QMessageBox.warning(self, "Errore", str(e))
+
+        self._run_async(_fetch, on_success=_on_ok,
+                         on_error=lambda m: QMessageBox.warning(self, "Errore", m),
+                         busy_text="Caricamento cartella...")
 
     def _filter_list(self, text: str) -> None:
         q = text.lower()
@@ -363,11 +471,15 @@ class MainWindow(QMainWindow):
 
     def _download_and_open(self, name: str) -> None:
         local = os.path.join(tempfile.gettempdir(), name)
-        try:
-            self.sftp_manager.download(posixpath.join(self.sftp_manager.current_remote_path, name), local)
-            utils.open_local_path(local)
-        except Exception as e:
-            QMessageBox.critical(self, "Errore", f"Impossibile aprire il file.\n{e}")
+        remote = posixpath.join(self.sftp_manager.current_remote_path, name)
+
+        def _task(emit):
+            def cb(done: int, size: int):
+                emit(f"Scaricamento {name}", int(done * 100 / size) if size else 0)
+            self.sftp_manager.download(remote, local, callback=cb)
+
+        self._run_transfer(_task, on_done=lambda: utils.open_local_path(local),
+                            on_error=lambda m: QMessageBox.critical(self, "Errore", f"Impossibile aprire il file.\n{m}"))
 
     def _show_context_menu(self, pos: QPoint) -> None:
         sel = [i for i in self.file_list.selectedItems() if i.data(Qt.ItemDataRole.UserRole) != ".."]
@@ -384,62 +496,87 @@ class MainWindow(QMainWindow):
 
     def _edit_remote(self, name: str) -> None:
         p = posixpath.join(self.sftp_manager.current_remote_path, name)
-        try:
-            content = self.sftp_manager.read_text_file(p)
-        except Exception as e:
-            QMessageBox.critical(self, "Errore", f"Impossibile leggere il file.\n{e}")
-            return
-        d = EditorDialog(name, content, self)
-        if d.exec() == QDialog.DialogCode.Accepted:
-            try:
-                self.sftp_manager.write_text_file(p, d.get_content())
-                QMessageBox.information(self, "Ok", "Salvato.")
-            except Exception as e:
-                QMessageBox.critical(self, "Errore", f"Impossibile salvare il file.\n{e}")
+
+        def _open_editor(content: str):
+            d = EditorDialog(name, content, self)
+            if d.exec() == QDialog.DialogCode.Accepted:
+                new_content = d.get_content()
+                self._run_async(
+                    lambda: self.sftp_manager.write_text_file(p, new_content),
+                    on_success=lambda _: QMessageBox.information(self, "Ok", "Salvato."),
+                    on_error=lambda m: QMessageBox.critical(self, "Errore", f"Impossibile salvare il file.\n{m}"),
+                    busy_text="Salvataggio in corso...")
+
+        self._run_async(
+            lambda: self.sftp_manager.read_text_file(p), on_success=_open_editor,
+            on_error=lambda m: QMessageBox.critical(self, "Errore", f"Impossibile leggere il file.\n{m}"),
+            busy_text="Apertura file...")
 
     def _upload_file(self) -> None:
         fs, _ = QFileDialog.getOpenFileNames(self, "Carica")
-        try:
-            for f in fs: self.sftp_manager.upload(f, posixpath.join(self.sftp_manager.current_remote_path, os.path.basename(f)))
-        except Exception as e:
-            QMessageBox.critical(self, "Errore", f"Impossibile completare il caricamento.\n{e}")
-        self.refresh_list()
+        if not fs: return
+        remote_dir = self.sftp_manager.current_remote_path
+
+        def _task(emit):
+            total = len(fs)
+            for idx, f in enumerate(fs, start=1):
+                name = os.path.basename(f)
+
+                def cb(done: int, size: int, idx=idx, name=name):
+                    emit(f"Caricamento {name} ({idx}/{total})", int(done * 100 / size) if size else 0)
+
+                self.sftp_manager.upload(f, posixpath.join(remote_dir, name), callback=cb)
+
+        self._run_transfer(_task, on_done=self.refresh_list,
+                            on_error=lambda m: QMessageBox.critical(self, "Errore", f"Impossibile completare il caricamento.\n{m}"))
 
     def _create_directory(self) -> None:
         n, ok = QInputDialog.getText(self, "Nuova Cartella", "Nome:")
         if ok and n:
-            try:
-                self.sftp_manager.mkdir(posixpath.join(self.sftp_manager.current_remote_path, n))
-            except Exception as e:
-                QMessageBox.critical(self, "Errore", f"Impossibile creare la cartella.\n{e}")
-            self.refresh_list()
+            path = posixpath.join(self.sftp_manager.current_remote_path, n)
+            self._run_async(
+                lambda: self.sftp_manager.mkdir(path), on_success=lambda _: self.refresh_list(),
+                on_error=lambda m: QMessageBox.critical(self, "Errore", f"Impossibile creare la cartella.\n{m}"),
+                busy_text="Creazione cartella...")
 
     def _delete_selected(self) -> None:
         items = [i for i in self.file_list.selectedItems() if i.data(Qt.ItemDataRole.UserRole) != ".."]
-        if items and QMessageBox.question(self, "Conferma", f"Eliminare {len(items)} elementi?") == QMessageBox.StandardButton.Yes:
-            try:
-                for i in items:
-                    target_path = posixpath.join(self.sftp_manager.current_remote_path, i.data(Qt.ItemDataRole.UserRole))
-                    is_directory = "📁" in i.text()
-                    self.sftp_manager.delete(target_path, is_directory)
-                self.refresh_list()
-            except Exception as e:
-                # Cattura l'errore e avvisa l'utente senza far crashare il software
-                msg = (f"Impossibile completare l'eliminazione.\n"
-                       f"Dettagli errore: {e}\n\n"
-                       f"Nota: tramite SFTP non è possibile eliminare cartelle che contengono file "
-                       f"oppure potresti non avere i permessi di scrittura in questo percorso.")
-                QMessageBox.critical(self, "Errore di Eliminazione", msg)
+        if not items: return
+        if QMessageBox.question(self, "Conferma", f"Eliminare {len(items)} elementi?") != QMessageBox.StandardButton.Yes:
+            return
+        targets = [(posixpath.join(self.sftp_manager.current_remote_path, i.data(Qt.ItemDataRole.UserRole)), "📁" in i.text()) for i in items]
+
+        def _do_delete():
+            for path, is_dir in targets:
+                self.sftp_manager.delete(path, is_dir)
+
+        def _on_error(msg: str):
+            # Avvisa l'utente senza far crashare il software
+            full_msg = (f"Impossibile completare l'eliminazione.\n"
+                        f"Dettagli errore: {msg}\n\n"
+                        f"Nota: tramite SFTP non è possibile eliminare cartelle che contengono file "
+                        f"oppure potresti non avere i permessi di scrittura in questo percorso.")
+            QMessageBox.critical(self, "Errore di Eliminazione", full_msg)
+
+        self._run_async(_do_delete, on_success=lambda _: self.refresh_list(), on_error=_on_error,
+                         busy_text="Eliminazione in corso...")
 
     def _download_selected(self) -> None:
         names = [i.data(Qt.ItemDataRole.UserRole) for i in self.file_list.selectedItems() if i.data(Qt.ItemDataRole.UserRole) != ".."]
+        if not names: return
         t = QFileDialog.getExistingDirectory(self, "Salva in...")
-        if t:
-            try:
-                self.sftp_manager.download_batch(names, self.sftp_manager.current_remote_path, t)
-                QMessageBox.information(self, "Ok", "Fatto.")
-            except Exception as e:
-                QMessageBox.critical(self, "Errore", f"Impossibile completare lo scaricamento.\n{e}")
+        if not t: return
+        remote_dir = self.sftp_manager.current_remote_path
+
+        def _task(emit):
+            total = len(names)
+            for idx, n in enumerate(names, start=1):
+                def cb(done: int, size: int, idx=idx, n=n):
+                    emit(f"Scaricamento {n} ({idx}/{total})", int(done * 100 / size) if size else 0)
+                self.sftp_manager.download(posixpath.join(remote_dir, n), os.path.join(t, n), callback=cb)
+
+        self._run_transfer(_task, on_done=lambda: QMessageBox.information(self, "Ok", "Fatto."),
+                            on_error=lambda m: QMessageBox.critical(self, "Errore", f"Impossibile completare lo scaricamento.\n{m}"))
 
     def _jump_to_path(self) -> None:
         self.sftp_manager.current_remote_path = self.txt_path.text(); self.refresh_list()
@@ -447,11 +584,12 @@ class MainWindow(QMainWindow):
     def _rename_item(self, old: str) -> None:
         n, ok = QInputDialog.getText(self, "Rinomina", "Nuovo nome:", text=old)
         if ok and n:
-            try:
-                self.sftp_manager.rename(posixpath.join(self.sftp_manager.current_remote_path, old), posixpath.join(self.sftp_manager.current_remote_path, n))
-            except Exception as e:
-                QMessageBox.critical(self, "Errore", f"Impossibile rinominare l'elemento.\n{e}")
-            self.refresh_list()
+            old_p = posixpath.join(self.sftp_manager.current_remote_path, old)
+            new_p = posixpath.join(self.sftp_manager.current_remote_path, n)
+            self._run_async(
+                lambda: self.sftp_manager.rename(old_p, new_p), on_success=lambda _: self.refresh_list(),
+                on_error=lambda m: QMessageBox.critical(self, "Errore", f"Impossibile rinominare l'elemento.\n{m}"),
+                busy_text="Rinomina in corso...")
 
     def _check_for_updates(self, silent: bool) -> None:
         self.w = UpdateWorker(); self.w.finished.connect(lambda a,v,u,err: self._on_upd(a,v,u,err,silent)); self.w.start()

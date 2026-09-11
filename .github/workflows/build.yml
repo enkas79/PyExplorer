@@ -49,7 +49,7 @@ jobs:
         else
           echo "Nessuna icona trovata: eseguo la build standard senza icona."
         fi
-        pyinstaller --onedir --noconsole --name=PyExplorer $ICON_ARGS --add-data "version.txt;." PyExplorer.py
+        pyinstaller --onedir --noconsole --name=PyExplorer $ICON_ARGS --add-data "version.txt;." src/main.py
 
     - name: Creazione script Inno Setup (.iss)
       run: |
@@ -137,7 +137,7 @@ jobs:
         else
           echo "Nessuna icona trovata: eseguo la build standard senza icona."
         fi
-        pyinstaller --onedir --noconsole --name=PyExplorer $ICON_ARGS --add-data "version.txt:." PyExplorer.py
+        pyinstaller --onedir --noconsole --name=PyExplorer $ICON_ARGS --add-data "version.txt:." src/main.py
 
     - name: Impacchettamento nel formato Debian (.deb)
       shell: bash
