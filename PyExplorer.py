@@ -3,7 +3,7 @@ Modulo Principale: PyExplorer - Pro.
 Gestore file SFTP avanzato per Raspberry Pi e server Linux basato su PyQt6.
 
 Autore: Enrico Martini
-Versione: 1.5.0
+Versione: letta dinamicamente da version.txt
 """
 
 import os
@@ -32,8 +32,20 @@ import utils
 # --- CONFIGURAZIONE ---
 GITHUB_REPO: str = "enkas79/PyExplorer"
 AUTHOR: str = "Enrico Martini"
-VERSION: str = "1.5.4"
 CONFIG_FILE: str = "connessioni_raspberry.json"
+VERSION_FILE: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "version.txt")
+
+
+def _read_version() -> str:
+    """Legge dinamicamente la versione corrente da version.txt."""
+    try:
+        with open(VERSION_FILE, "r") as f:
+            return f.read().strip()
+    except Exception:
+        return "0.0.0"
+
+
+VERSION: str = _read_version()
 
 # ==========================================
 # LOGICA DI BUSINESS (MODEL)
@@ -258,7 +270,12 @@ class MainWindow(QMainWindow):
 
     def _create_menu_bar(self) -> None:
         """Crea la barra dei menu principale dell'applicazione."""
-        m = self.menuBar().addMenu("Opzioni")
+        m = self.menuBar().addMenu("Aiuto")
+
+        # Azione: Informazioni
+        a_about = QAction("Informazioni", self)
+        a_about.triggered.connect(self._show_about)
+        m.addAction(a_about)
 
         # Azione: Update
         a_upd = QAction("Controlla Aggiornamenti", self)
@@ -275,6 +292,13 @@ class MainWindow(QMainWindow):
             )
         )
         m.addAction(a_guida)
+
+    def _show_about(self) -> None:
+        QMessageBox.about(
+            self,
+            "Informazioni su PyExplorer Pro",
+            f"<b>PyExplorer Pro</b><br>Versione: {VERSION}<br>Autore: {AUTHOR}"
+        )
 
     def _refresh_profile_list(self) -> None:
         self.profile_list.clear()
