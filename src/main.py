@@ -22,10 +22,11 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QPushButton,
     QLineEdit, QListWidget, QWidget, QMessageBox, QFileDialog, QLabel,
     QFrame, QMenu, QListWidgetItem, QDialog, QTextBrowser, QDialogButtonBox,
-    QInputDialog, QPlainTextEdit, QSplitter, QProgressDialog
+    QInputDialog, QPlainTextEdit, QSplitter, QProgressDialog, QStyle,
+    QToolButton, QScrollArea, QSizePolicy
 )
 from PyQt6.QtGui import QAction, QFont, QDesktopServices, QIcon
-from PyQt6.QtCore import Qt, QPoint, QThread, pyqtSignal, QUrl
+from PyQt6.QtCore import Qt, QPoint, QThread, pyqtSignal, QUrl, QSize
 
 import utils
 
@@ -33,6 +34,7 @@ import utils
 GITHUB_REPO: str = "enkas79/PyExplorer"
 AUTHOR: str = "Enrico Martini"
 CONFIG_FILE: str = "connessioni_raspberry.json"
+ROLE_IS_DIR: int = Qt.ItemDataRole.UserRole + 1
 
 
 def _base_dir() -> str:
@@ -242,14 +244,38 @@ class MainWindow(QMainWindow):
     def _init_ui(self) -> None:
         self.setWindowTitle(f"PyExplorer Pro v{VERSION}")
         self.setMinimumSize(1100, 800)
+        icon_path = os.path.join(_base_dir(), "icon.png")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+        style = self.style()
         self.setStyleSheet("""
-            QMainWindow { background-color: #f0f2f5; }
-            QFrame#Sidebar { background-color: #2c3e50; border-right: 1px solid #bdc3c7; }
-            QListWidget#ProfileList { background: transparent; border: none; color: white; font-size: 13px; }
-            QLineEdit { padding: 6px; border: 1px solid #ccc; border-radius: 4px; }
-            QPushButton#Primary { background-color: #27ae60; color: white; font-weight: bold; border-radius: 4px; padding: 8px; }
-            QPushButton#Secondary { background-color: #2980b9; color: white; border-radius: 4px; padding: 5px; }
-            QLabel#Title { color: #ecf0f1; font-weight: bold; padding: 10px; font-size: 14px; }
+            QMainWindow { background-color: #f5f6fa; }
+            QFrame#Sidebar { background-color: #1f2a38; border-right: 1px solid #10151c; }
+            QListWidget#ProfileList { background: transparent; border: none; color: #ecf0f1; font-size: 13px; outline: none; }
+            QListWidget#ProfileList::item { padding: 8px 12px; border-radius: 6px; margin: 2px 8px; }
+            QListWidget#ProfileList::item:hover { background-color: #2c3e50; }
+            QListWidget#ProfileList::item:selected { background-color: #2980b9; color: white; }
+            QLabel#Title { color: #ecf0f1; font-weight: 600; padding: 14px 12px 8px 12px; font-size: 12px; letter-spacing: 1px; }
+            QFrame#ConnPanel { background: white; border: 1px solid #e1e4e8; border-radius: 8px; }
+            QLineEdit { padding: 7px 10px; border: 1px solid #d0d5dd; border-radius: 6px; background: white; }
+            QLineEdit:focus { border: 1px solid #2980b9; }
+            QPushButton { padding: 7px 14px; border-radius: 6px; border: none; background-color: #dfe4ea; }
+            QPushButton:hover { background-color: #ced6e0; }
+            QPushButton:disabled { background-color: #eceff3; color: #a8b0bb; }
+            QPushButton#Primary { background-color: #27ae60; color: white; font-weight: 600; }
+            QPushButton#Primary:hover { background-color: #219150; }
+            QPushButton#Secondary { background-color: #2980b9; color: white; }
+            QPushButton#Secondary:hover { background-color: #2574a9; }
+            QPushButton#Danger { background-color: #c0392b; color: white; }
+            QPushButton#Danger:hover { background-color: #a93226; }
+            QListWidget { background: white; border: 1px solid #e1e4e8; border-radius: 6px; padding: 4px; outline: none; }
+            QListWidget::item { padding: 6px 8px; border-radius: 4px; }
+            QListWidget::item:hover { background-color: #eef2f7; }
+            QListWidget::item:selected { background-color: #d6e9f8; color: #1a1a1a; }
+            QToolButton { border: none; padding: 5px; border-radius: 5px; }
+            QToolButton:hover { background-color: #e1e8ee; }
+            QToolButton:disabled { color: #c2c9d1; }
+            QScrollArea#BreadcrumbArea { border: none; background: white; }
         """)
 
         central = QWidget()
@@ -272,29 +298,56 @@ class MainWindow(QMainWindow):
         # Work Area
         work_area = QWidget()
         work_layout = QVBoxLayout(work_area)
+        work_layout.setContentsMargins(16, 16, 16, 16); work_layout.setSpacing(10)
 
         # Conn Panel
-        conn_group = QFrame(); conn_group.setFrameShape(QFrame.Shape.StyledPanel)
+        conn_group = QFrame(); conn_group.setObjectName("ConnPanel"); conn_group.setFrameShape(QFrame.Shape.StyledPanel)
         cl = QHBoxLayout(conn_group)
         self.txt_alias = QLineEdit(); self.txt_alias.setPlaceholderText("Alias (es. Pi4)")
         self.txt_host = QLineEdit(); self.txt_host.setPlaceholderText("Host/IP")
         self.txt_user = QLineEdit(); self.txt_user.setPlaceholderText("User")
         self.txt_pass = QLineEdit(); self.txt_pass.setPlaceholderText("Pass"); self.txt_pass.setEchoMode(QLineEdit.EchoMode.Password)
         self.btn_save = QPushButton("Salva"); self.btn_save.clicked.connect(self._save_profile)
-        self.btn_conn = QPushButton("Connetti"); self.btn_conn.setObjectName("Primary"); self.btn_conn.clicked.connect(self._toggle_connection)
+        self.btn_conn = QPushButton("Connetti")
+        self.btn_conn.setObjectName("Primary")
+        self.btn_conn.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DriveNetIcon))
+        self.btn_conn.clicked.connect(self._toggle_connection)
 
         for w in [self.txt_alias, self.txt_host, self.txt_user, self.txt_pass, self.btn_save, self.btn_conn]: cl.addWidget(w)
         work_layout.addWidget(conn_group)
 
-        # Browser
+        # Navigazione: pulsante "Su", breadcrumb cliccabile, modifica manuale, ricerca
         nav_l = QHBoxLayout()
-        self.txt_path = QLineEdit("/"); self.txt_path.returnPressed.connect(self._jump_to_path)
+        self.btn_up_dir = QToolButton()
+        self.btn_up_dir.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_FileDialogToParent))
+        self.btn_up_dir.setToolTip("Cartella superiore")
+        self.btn_up_dir.setEnabled(False)
+        self.btn_up_dir.clicked.connect(self._go_up)
+        nav_l.addWidget(self.btn_up_dir)
+
+        self.breadcrumb_bar = QWidget()
+        self.breadcrumb_layout = QHBoxLayout(self.breadcrumb_bar)
+        self.breadcrumb_layout.setContentsMargins(6, 0, 6, 0); self.breadcrumb_layout.setSpacing(2)
+        breadcrumb_scroll = QScrollArea(); breadcrumb_scroll.setObjectName("BreadcrumbArea")
+        breadcrumb_scroll.setWidget(self.breadcrumb_bar); breadcrumb_scroll.setWidgetResizable(True)
+        breadcrumb_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        breadcrumb_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        breadcrumb_scroll.setFixedHeight(36)
+        nav_l.addWidget(breadcrumb_scroll, 4)
+
+        self.btn_edit_path = QToolButton()
+        self.btn_edit_path.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView))
+        self.btn_edit_path.setToolTip("Vai a un percorso specifico")
+        self.btn_edit_path.clicked.connect(self._edit_path_manually)
+        nav_l.addWidget(self.btn_edit_path)
+
         self.txt_search = QLineEdit(); self.txt_search.setPlaceholderText("Cerca...")
         self.txt_search.textChanged.connect(self._filter_list)
-        nav_l.addWidget(QLabel("Percorso:")); nav_l.addWidget(self.txt_path, 4); nav_l.addWidget(self.txt_search, 1)
+        nav_l.addWidget(self.txt_search, 1)
         work_layout.addLayout(nav_l)
 
         self.file_list = QListWidget(); self.file_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self.file_list.setIconSize(QSize(20, 20))
         self.file_list.itemDoubleClicked.connect(self._on_item_double_clicked)
         self.file_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.file_list.customContextMenuRequested.connect(self._show_context_menu)
@@ -302,14 +355,22 @@ class MainWindow(QMainWindow):
 
         # Actions
         act_l = QHBoxLayout()
-        self.btn_up = QPushButton("Carica File"); self.btn_up.setEnabled(False); self.btn_up.clicked.connect(self._upload_file)
-        self.btn_mk = QPushButton("Nuova Cartella"); self.btn_mk.setEnabled(False); self.btn_mk.clicked.connect(self._create_directory)
-        btn_exit = QPushButton("Esci"); btn_exit.setStyleSheet("background: #c0392b; color: white;"); btn_exit.clicked.connect(self.close)
+        self.btn_up = QPushButton("Carica File")
+        self.btn_up.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_ArrowUp))
+        self.btn_up.setEnabled(False); self.btn_up.clicked.connect(self._upload_file)
+        self.btn_mk = QPushButton("Nuova Cartella")
+        self.btn_mk.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_FileDialogNewFolder))
+        self.btn_mk.setEnabled(False); self.btn_mk.clicked.connect(self._create_directory)
+        btn_exit = QPushButton("Esci")
+        btn_exit.setObjectName("Danger")
+        btn_exit.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogCloseButton))
+        btn_exit.clicked.connect(self.close)
         act_l.addWidget(self.btn_up); act_l.addWidget(self.btn_mk); act_l.addStretch(); act_l.addWidget(btn_exit)
         work_layout.addLayout(act_l)
 
         main_layout.addWidget(work_area)
         self._create_menu_bar()
+        self._set_breadcrumb("/")
 
     def _create_menu_bar(self) -> None:
         """Crea la barra dei menu principale dell'applicazione."""
@@ -422,17 +483,19 @@ class MainWindow(QMainWindow):
                 return self.sftp_manager.connect(host, user, psw)
 
             def _on_connected(_result):
-                self.btn_conn.setText("Disconnetti"); self.btn_conn.setStyleSheet("background: #e67e22; color: white;")
+                self.btn_conn.setText("Disconnetti"); self.btn_conn.setStyleSheet("background-color: #e67e22; color: white; font-weight: 600;")
                 self.btn_up.setEnabled(True); self.btn_mk.setEnabled(True); self.refresh_list()
 
             self._run_async(_do_connect, on_success=_on_connected, busy_text="Connessione in corso...")
         else:
             self.sftp_manager.disconnect(); self.btn_conn.setText("Connetti")
-            self.btn_conn.setStyleSheet("background: #27ae60; color: white;")
+            self.btn_conn.setStyleSheet("")
             self.btn_up.setEnabled(False); self.btn_mk.setEnabled(False); self.file_list.clear()
+            self.btn_up_dir.setEnabled(False); self._set_breadcrumb("/")
 
     def refresh_list(self) -> None:
         path = self.sftp_manager.current_remote_path
+        style = self.style()
 
         def _fetch():
             items = self.sftp_manager.list_dir(path)
@@ -441,19 +504,58 @@ class MainWindow(QMainWindow):
 
         def _on_ok(rows):
             self.file_list.clear(); self.full_list_cache = []
-            self.txt_path.setText(path)
+            self._set_breadcrumb(path)
+            self.btn_up_dir.setEnabled(path != "/")
             if path != "/":
-                item = QListWidgetItem("📁 .."); item.setData(Qt.ItemDataRole.UserRole, "..")
+                item = QListWidgetItem(style.standardIcon(QStyle.StandardPixmap.SP_FileDialogToParent), "..")
+                item.setData(Qt.ItemDataRole.UserRole, ".."); item.setData(ROLE_IS_DIR, True)
                 self.file_list.addItem(item)
+            dir_icon = style.standardIcon(QStyle.StandardPixmap.SP_DirIcon)
+            file_icon = style.standardIcon(QStyle.StandardPixmap.SP_FileIcon)
             for filename, is_dir, perms in rows:
-                prefix = "📁 " if is_dir else "📄 "
-                li = QListWidgetItem(f"{prefix}{filename} [{perms}]")
-                li.setData(Qt.ItemDataRole.UserRole, filename)
+                li = QListWidgetItem(dir_icon if is_dir else file_icon, f"{filename}   [{perms}]")
+                li.setData(Qt.ItemDataRole.UserRole, filename); li.setData(ROLE_IS_DIR, is_dir)
                 self.file_list.addItem(li); self.full_list_cache.append(li)
 
         self._run_async(_fetch, on_success=_on_ok,
                          on_error=lambda m: QMessageBox.warning(self, "Errore", m),
                          busy_text="Caricamento cartella...")
+
+    def _set_breadcrumb(self, path: str) -> None:
+        """Ricostruisce la barra di navigazione a segmenti cliccabili (breadcrumb)."""
+        while self.breadcrumb_layout.count():
+            child = self.breadcrumb_layout.takeAt(0)
+            if child.widget(): child.widget().deleteLater()
+
+        parts = [p for p in path.split("/") if p]
+
+        def _crumb(label: str, target: str, is_last: bool) -> QToolButton:
+            btn = QToolButton(); btn.setText(label); btn.setAutoRaise(True)
+            if is_last: btn.setStyleSheet("font-weight: 600; color: #1a1a1a;")
+            btn.clicked.connect(lambda: self._navigate_to(target))
+            return btn
+
+        self.breadcrumb_layout.addWidget(_crumb("/", "/", len(parts) == 0))
+        cumulative = ""
+        for idx, part in enumerate(parts):
+            cumulative += "/" + part
+            self.breadcrumb_layout.addWidget(QLabel("›"))
+            self.breadcrumb_layout.addWidget(_crumb(part, cumulative, idx == len(parts) - 1))
+        self.breadcrumb_layout.addStretch()
+
+    def _navigate_to(self, path: str) -> None:
+        self.sftp_manager.current_remote_path = path
+        self.refresh_list()
+
+    def _go_up(self) -> None:
+        path = self.sftp_manager.current_remote_path
+        if path != "/":
+            self._navigate_to(posixpath.dirname(path) or "/")
+
+    def _edit_path_manually(self) -> None:
+        n, ok = QInputDialog.getText(self, "Vai al percorso", "Percorso:", text=self.sftp_manager.current_remote_path)
+        if ok and n:
+            self._navigate_to(n)
 
     def _filter_list(self, text: str) -> None:
         q = text.lower()
@@ -463,9 +565,9 @@ class MainWindow(QMainWindow):
 
     def _on_item_double_clicked(self, item: QListWidgetItem) -> None:
         name = item.data(Qt.ItemDataRole.UserRole)
-        if "📁" in item.text():
-            self.sftp_manager.current_remote_path = posixpath.dirname(self.sftp_manager.current_remote_path) if name == ".." else posixpath.join(self.sftp_manager.current_remote_path, name)
-            self.refresh_list()
+        if item.data(ROLE_IS_DIR):
+            target = posixpath.dirname(self.sftp_manager.current_remote_path) if name == ".." else posixpath.join(self.sftp_manager.current_remote_path, name)
+            self._navigate_to(target or "/")
         else:
             self._download_and_open(name)
 
@@ -484,14 +586,19 @@ class MainWindow(QMainWindow):
     def _show_context_menu(self, pos: QPoint) -> None:
         sel = [i for i in self.file_list.selectedItems() if i.data(Qt.ItemDataRole.UserRole) != ".."]
         if not sel: return
+        style = self.style()
         menu = QMenu()
         if len(sel) == 1:
             name = sel[0].data(Qt.ItemDataRole.UserRole)
-            if "📄" in sel[0].text():
-                menu.addAction("Edita (Remoto)", lambda: self._edit_remote(name))
-            menu.addAction("Rinomina", lambda: self._rename_item(name))
-        menu.addAction(f"Scarica ({len(sel)})", self._download_selected)
-        menu.addAction(f"Elimina ({len(sel)})", self._delete_selected)
+            if not sel[0].data(ROLE_IS_DIR):
+                a = menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_FileDialogContentsView), "Edita (Remoto)")
+                a.triggered.connect(lambda: self._edit_remote(name))
+            a = menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView), "Rinomina")
+            a.triggered.connect(lambda: self._rename_item(name))
+        a = menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_ArrowDown), f"Scarica ({len(sel)})")
+        a.triggered.connect(self._download_selected)
+        a = menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_TrashIcon), f"Elimina ({len(sel)})")
+        a.triggered.connect(self._delete_selected)
         menu.exec(self.file_list.mapToGlobal(pos))
 
     def _edit_remote(self, name: str) -> None:
@@ -544,7 +651,7 @@ class MainWindow(QMainWindow):
         if not items: return
         if QMessageBox.question(self, "Conferma", f"Eliminare {len(items)} elementi?") != QMessageBox.StandardButton.Yes:
             return
-        targets = [(posixpath.join(self.sftp_manager.current_remote_path, i.data(Qt.ItemDataRole.UserRole)), "📁" in i.text()) for i in items]
+        targets = [(posixpath.join(self.sftp_manager.current_remote_path, i.data(Qt.ItemDataRole.UserRole)), bool(i.data(ROLE_IS_DIR))) for i in items]
 
         def _do_delete():
             for path, is_dir in targets:
@@ -577,9 +684,6 @@ class MainWindow(QMainWindow):
 
         self._run_transfer(_task, on_done=lambda: QMessageBox.information(self, "Ok", "Fatto."),
                             on_error=lambda m: QMessageBox.critical(self, "Errore", f"Impossibile completare lo scaricamento.\n{m}"))
-
-    def _jump_to_path(self) -> None:
-        self.sftp_manager.current_remote_path = self.txt_path.text(); self.refresh_list()
 
     def _rename_item(self, old: str) -> None:
         n, ok = QInputDialog.getText(self, "Rinomina", "Nuovo nome:", text=old)
