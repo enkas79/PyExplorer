@@ -32,7 +32,7 @@ import utils
 # --- CONFIGURAZIONE ---
 GITHUB_REPO: str = "enkas79/PyExplorer"
 AUTHOR: str = "Enrico Martini"
-VERSION: str = "1.5.3"
+VERSION: str = "1.5.4"
 CONFIG_FILE: str = "connessioni_raspberry.json"
 
 # ==========================================
@@ -144,8 +144,18 @@ class EditorDialog(QDialog):
     def get_content(self) -> str: return self.editor.toPlainText()
 
 
+def _version_tuple(v: str) -> tuple[int, ...]:
+    """Converte 'x.y.z' in tupla di interi per un confronto semver corretto."""
+    parts = []
+    for p in v.strip().split('.'):
+        digits = ''.join(c for c in p if c.isdigit())
+        parts.append(int(digits) if digits else 0)
+    return tuple(parts)
+
+
 class UpdateWorker(QThread):
-    finished = pyqtSignal(bool, str, str)
+    finished = pyqtSignal(bool, str, str, str)  # aggiornamento_disponibile, versione, url, errore
+
     def run(self) -> None:
         try:
             r = requests.get(f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest", timeout=5)
@@ -153,8 +163,11 @@ class UpdateWorker(QThread):
                 data = r.json()
                 v = data.get('tag_name', '').replace('v', '')
                 url = next((a['browser_download_url'] for a in data.get('assets', []) if '.exe' in a['name'] or '.deb' in a['name']), "")
-                self.finished.emit(v > VERSION, v, url)
-        except: pass
+                self.finished.emit(_version_tuple(v) > _version_tuple(VERSION), v, url, "")
+            else:
+                self.finished.emit(False, "", "", f"Risposta inattesa dal server (HTTP {r.status_code}).")
+        except Exception as e:
+            self.finished.emit(False, "", "", str(e))
 
 
 # ==========================================
@@ -326,8 +339,11 @@ class MainWindow(QMainWindow):
 
     def _download_and_open(self, name: str) -> None:
         local = os.path.join(tempfile.gettempdir(), name)
-        self.sftp_manager.download(posixpath.join(self.sftp_manager.current_remote_path, name), local)
-        utils.open_local_path(local)
+        try:
+            self.sftp_manager.download(posixpath.join(self.sftp_manager.current_remote_path, name), local)
+            utils.open_local_path(local)
+        except Exception as e:
+            QMessageBox.critical(self, "Errore", f"Impossibile aprire il file.\n{e}")
 
     def _show_context_menu(self, pos: QPoint) -> None:
         sel = [i for i in self.file_list.selectedItems() if i.data(Qt.ItemDataRole.UserRole) != ".."]
@@ -344,19 +360,35 @@ class MainWindow(QMainWindow):
 
     def _edit_remote(self, name: str) -> None:
         p = posixpath.join(self.sftp_manager.current_remote_path, name)
-        d = EditorDialog(name, self.sftp_manager.read_text_file(p), self)
+        try:
+            content = self.sftp_manager.read_text_file(p)
+        except Exception as e:
+            QMessageBox.critical(self, "Errore", f"Impossibile leggere il file.\n{e}")
+            return
+        d = EditorDialog(name, content, self)
         if d.exec() == QDialog.DialogCode.Accepted:
-            self.sftp_manager.write_text_file(p, d.get_content())
-            QMessageBox.information(self, "Ok", "Salvato.")
+            try:
+                self.sftp_manager.write_text_file(p, d.get_content())
+                QMessageBox.information(self, "Ok", "Salvato.")
+            except Exception as e:
+                QMessageBox.critical(self, "Errore", f"Impossibile salvare il file.\n{e}")
 
     def _upload_file(self) -> None:
         fs, _ = QFileDialog.getOpenFileNames(self, "Carica")
-        for f in fs: self.sftp_manager.upload(f, posixpath.join(self.sftp_manager.current_remote_path, os.path.basename(f)))
+        try:
+            for f in fs: self.sftp_manager.upload(f, posixpath.join(self.sftp_manager.current_remote_path, os.path.basename(f)))
+        except Exception as e:
+            QMessageBox.critical(self, "Errore", f"Impossibile completare il caricamento.\n{e}")
         self.refresh_list()
 
     def _create_directory(self) -> None:
         n, ok = QInputDialog.getText(self, "Nuova Cartella", "Nome:")
-        if ok and n: self.sftp_manager.mkdir(posixpath.join(self.sftp_manager.current_remote_path, n)); self.refresh_list()
+        if ok and n:
+            try:
+                self.sftp_manager.mkdir(posixpath.join(self.sftp_manager.current_remote_path, n))
+            except Exception as e:
+                QMessageBox.critical(self, "Errore", f"Impossibile creare la cartella.\n{e}")
+            self.refresh_list()
 
     def _delete_selected(self) -> None:
         items = [i for i in self.file_list.selectedItems() if i.data(Qt.ItemDataRole.UserRole) != ".."]
@@ -378,30 +410,44 @@ class MainWindow(QMainWindow):
     def _download_selected(self) -> None:
         names = [i.data(Qt.ItemDataRole.UserRole) for i in self.file_list.selectedItems() if i.data(Qt.ItemDataRole.UserRole) != ".."]
         t = QFileDialog.getExistingDirectory(self, "Salva in...")
-        if t: self.sftp_manager.download_batch(names, self.sftp_manager.current_remote_path, t); QMessageBox.information(self, "Ok", "Fatto.")
+        if t:
+            try:
+                self.sftp_manager.download_batch(names, self.sftp_manager.current_remote_path, t)
+                QMessageBox.information(self, "Ok", "Fatto.")
+            except Exception as e:
+                QMessageBox.critical(self, "Errore", f"Impossibile completare lo scaricamento.\n{e}")
 
     def _jump_to_path(self) -> None:
         self.sftp_manager.current_remote_path = self.txt_path.text(); self.refresh_list()
 
     def _rename_item(self, old: str) -> None:
         n, ok = QInputDialog.getText(self, "Rinomina", "Nuovo nome:", text=old)
-        if ok and n: self.sftp_manager.rename(posixpath.join(self.sftp_manager.current_remote_path, old), posixpath.join(self.sftp_manager.current_remote_path, n)); self.refresh_list()
+        if ok and n:
+            try:
+                self.sftp_manager.rename(posixpath.join(self.sftp_manager.current_remote_path, old), posixpath.join(self.sftp_manager.current_remote_path, n))
+            except Exception as e:
+                QMessageBox.critical(self, "Errore", f"Impossibile rinominare l'elemento.\n{e}")
+            self.refresh_list()
 
     def _check_for_updates(self, silent: bool) -> None:
-        self.w = UpdateWorker(); self.w.finished.connect(lambda a,v,u: self._on_upd(a,v,u,silent)); self.w.start()
+        self.w = UpdateWorker(); self.w.finished.connect(lambda a,v,u,err: self._on_upd(a,v,u,err,silent)); self.w.start()
 
-    def _on_upd(self, av: bool, v: str, u: str, s: bool) -> None:
+    def _on_upd(self, av: bool, v: str, u: str, err: str, s: bool) -> None:
         """
         Gestisce la risposta del controllo aggiornamenti.
         Se viene trovato un update, reindirizza l'utente alla sezione download del sito.
         """
-        if av and QMessageBox.question(self, "Update", f"v{v} disponibile. Scaricare?") == QMessageBox.StandardButton.Yes: 
+        if err:
+            if not s:
+                QMessageBox.warning(self, "Update", f"Impossibile verificare gli aggiornamenti.\n{err}")
+            return
+        if av and QMessageBox.question(self, "Update", f"v{v} disponibile. Scaricare?") == QMessageBox.StandardButton.Yes:
             # Definiamo l'URL del tuo sito web
-            sito_download = "https://mindnetwork.vip/download" 
-            
+            sito_download = "https://mindnetwork.vip/download"
+
             # Apriamo il browser dell'utente direttamente sul tuo portale
             QDesktopServices.openUrl(QUrl(sito_download))
-        elif not s: 
+        elif not s:
             QMessageBox.information(self, "Update", "Sei all'ultima versione.")
 
     def closeEvent(self, e) -> None:
