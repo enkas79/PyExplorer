@@ -142,8 +142,11 @@ class ProfileManager:
 
     @staticmethod
     def save(profiles: dict) -> None:
-        with open(CONFIG_FILE, "w") as f:
-            json.dump(profiles, f, indent=4)
+        try:
+            with open(CONFIG_FILE, "w") as f:
+                json.dump(profiles, f, indent=4)
+        except OSError as e:
+            raise RuntimeError(f"Impossibile salvare i profili in {CONFIG_FILE}: {e}") from e
 
 
 # ==========================================
@@ -417,7 +420,12 @@ class MainWindow(QMainWindow):
         alias = self.txt_alias.text().strip()
         if not alias: return
         self.profiles[alias] = {"host": self.txt_host.text(), "user": self.txt_user.text(), "pass": self.txt_pass.text()}
-        ProfileManager.save(self.profiles); self._refresh_profile_list()
+        try:
+            ProfileManager.save(self.profiles)
+        except RuntimeError as e:
+            QMessageBox.critical(self, "Errore", str(e))
+            return
+        self._refresh_profile_list()
 
     def _clear_conn_fields(self) -> None:
         for w in [self.txt_alias, self.txt_host, self.txt_user, self.txt_pass]: w.clear()
