@@ -33,8 +33,33 @@ import utils
 # --- CONFIGURAZIONE ---
 GITHUB_REPO: str = "enkas79/PyExplorer"
 AUTHOR: str = "Enrico Martini"
-CONFIG_FILE: str = "connessioni_raspberry.json"
 ROLE_IS_DIR: int = Qt.ItemDataRole.UserRole + 1
+
+
+def _user_config_dir() -> str:
+    """Cartella di configurazione utente (scrivibile anche se l'app è installata in Program Files)."""
+    base = os.getenv("APPDATA") or os.path.expanduser("~/.config")
+    path = os.path.join(base, "PyExplorer")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _resolve_config_file() -> str:
+    """Determina il percorso del file profili, migrando quello legacy nella cwd se presente."""
+    new_path = os.path.join(_user_config_dir(), "connessioni_raspberry.json")
+    legacy_path = os.path.join(os.getcwd(), "connessioni_raspberry.json")
+    if not os.path.exists(new_path) and os.path.exists(legacy_path):
+        try:
+            with open(legacy_path, "r") as f:
+                data = f.read()
+            with open(new_path, "w") as f:
+                f.write(data)
+        except OSError:
+            return legacy_path
+    return new_path
+
+
+CONFIG_FILE: str = _resolve_config_file()
 
 
 def _base_dir() -> str:
