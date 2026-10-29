@@ -8,27 +8,33 @@ Versione: letta dinamicamente da version.txt
 
 import os
 import json
+import logging
 import stat
 import tempfile
 import posixpath
 import sys
 import requests
-import datetime
 import platform
-from typing import Optional, Any
+from typing import Optional
 
 import paramiko
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QPushButton,
     QLineEdit, QListWidget, QWidget, QMessageBox, QFileDialog, QLabel,
-    QFrame, QMenu, QListWidgetItem, QDialog, QTextBrowser, QDialogButtonBox,
-    QInputDialog, QPlainTextEdit, QSplitter, QProgressDialog, QStyle,
-    QToolButton, QScrollArea, QSizePolicy
+    QFrame, QMenu, QListWidgetItem, QDialog, QDialogButtonBox,
+    QInputDialog, QPlainTextEdit, QProgressDialog, QStyle,
+    QToolButton, QScrollArea
 )
 from PyQt6.QtGui import QAction, QFont, QDesktopServices, QIcon
 from PyQt6.QtCore import Qt, QPoint, QThread, pyqtSignal, QUrl, QSize
 
 import utils
+import styles
+
+try:
+    import keyring
+except ImportError:
+    keyring = None
 
 # --- CONFIGURAZIONE ---
 GITHUB_REPO: str = "enkas79/PyExplorer"
@@ -60,6 +66,9 @@ def _resolve_config_file() -> str:
 
 
 CONFIG_FILE: str = _resolve_config_file()
+KNOWN_HOSTS_FILE: str = os.path.join(_user_config_dir(), "known_hosts")
+
+logger = logging.getLogger("pyexplorer")
 
 
 def _base_dir() -> str:
@@ -95,16 +104,36 @@ class SftpManager:
         self.current_remote_path: str = "/"
 
     def connect(self, host: str, user: str, psw: str) -> bool:
-        self.ssh_client = paramiko.SSHClient()
-        self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        self.ssh_client.connect(hostname=host, username=user, password=psw, timeout=10)
-        self.sftp_client = self.ssh_client.open_sftp()
-        self.current_remote_path = self.sftp_client.normalize('.')
+        client = paramiko.SSHClient()
+        known = paramiko.HostKeys()
+        if os.path.exists(KNOWN_HOSTS_FILE):
+            known.load(KNOWN_HOSTS_FILE)
+        if host in known:
+            client.load_host_keys(KNOWN_HOSTS_FILE)
+            client.set_missing_host_key_policy(paramiko.RejectPolicy())
+        else:
+            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        try:
+            client.connect(hostname=host, username=user, password=psw, timeout=10)
+            sftp = client.open_sftp()
+        except Exception:
+            client.close()
+            raise
+        client.get_host_keys().save(KNOWN_HOSTS_FILE)
+        self.ssh_client = client
+        self.sftp_client = sftp
+        self.current_remote_path = sftp.normalize('.')
         return True
 
     def disconnect(self) -> None:
-        if self.sftp_client: self.sftp_client.close()
-        if self.ssh_client: self.ssh_client.close()
+        try:
+            if self.sftp_client: self.sftp_client.close()
+        finally:
+            self.sftp_client = None
+        try:
+            if self.ssh_client: self.ssh_client.close()
+        finally:
+            self.ssh_client = None
 
     def list_dir(self, path: str) -> list[paramiko.SFTPAttributes]:
         if not self.sftp_client: raise ConnectionError("Client non connesso.")
@@ -119,13 +148,22 @@ class SftpManager:
     def download(self, remote: str, local: str, callback=None) -> None:
         self.sftp_client.get(remote, local, callback=callback)
 
-    def download_batch(self, names: list[str], remote_dir: str, target_dir: str) -> None:
-        for n in names:
-            self.download(posixpath.join(remote_dir, n), os.path.join(target_dir, n))
+    def delete_recursive(self, path: str) -> None:
+        for entry in self.sftp_client.listdir_attr(path):
+            full = posixpath.join(path, entry.filename)
+            if stat.S_ISDIR(entry.st_mode):
+                self.delete_recursive(full)
+            else:
+                self.sftp_client.remove(full)
+        self.sftp_client.rmdir(path)
 
     def read_text_file(self, path: str) -> str:
-        with self.sftp_client.open(path, 'r') as f:
-            return f.read().decode('utf-8', errors='replace')
+        with self.sftp_client.open(path, 'rb') as f:
+            data = f.read()
+        try:
+            return data.decode('utf-8')
+        except UnicodeDecodeError as e:
+            raise ValueError("Il file non sembra un file di testo UTF-8.") from e
 
     def write_text_file(self, path: str, content: str) -> None:
         with self.sftp_client.open(path, 'w') as f:
@@ -145,31 +183,66 @@ class ProfileManager:
     """Gestore persistenza profili di connessione con migrazione automatica."""
 
     @staticmethod
-    def load() -> dict:
-        if os.path.exists(CONFIG_FILE):
+    def _get_stored_password(alias: str) -> str:
+        if keyring is not None:
             try:
-                with open(CONFIG_FILE, "r") as f:
-                    data = json.load(f)
-
-                    # Verifica retrocompatibilità: vecchio formato v1.4.0
-                    # Se "host" è presente come stringa nel root, è il vecchio file.
-                    if "host" in data and isinstance(data["host"], str):
-                        # Crea un profilo di default e migra i dati
-                        migrated_data = {"Profilo Migrato": data}
-                        # Salva immediatamente nel nuovo formato
-                        ProfileManager.save(migrated_data)
-                        return migrated_data
-
-                    return data
+                return keyring.get_password("PyExplorer", alias) or ""
             except Exception:
-                return {}
-        return {}
+                logger.exception("Keyring non disponibile, uso il file JSON")
+        return ""
+
+    @staticmethod
+    def _store_password(alias: str, password: str) -> bool:
+        if keyring is not None and password:
+            try:
+                keyring.set_password("PyExplorer", alias, password)
+                return True
+            except Exception:
+                logger.exception("Impossibile salvare la password nel keyring")
+        return False
+
+    @staticmethod
+    def load() -> dict:
+        if not os.path.exists(CONFIG_FILE):
+            return {}
+        try:
+            with open(CONFIG_FILE, "r") as f:
+                data = json.load(f)
+        except Exception:
+            logger.exception("Impossibile leggere %s", CONFIG_FILE)
+            return {}
+        # Migrazione vecchio formato v1.4.0
+        if "host" in data and isinstance(data["host"], str):
+            data = {"Profilo Migrato": data}
+            ProfileManager.save(data)
+        # Migrazione password in chiaro -> keyring di sistema
+        migrated = False
+        for alias, prof in data.items():
+            if isinstance(prof, dict) and prof.get("pass"):
+                if ProfileManager._store_password(alias, prof["pass"]):
+                    prof["pass"] = ""
+                    prof["pass_in_keyring"] = True
+                    migrated = True
+        if migrated or any(isinstance(p, dict) and p.get("pass_in_keyring") for p in data.values()):
+            ProfileManager.save(data)
+        for alias, prof in data.items():
+            if isinstance(prof, dict) and prof.get("pass_in_keyring"):
+                prof["pass"] = ProfileManager._get_stored_password(alias)
+        return data
 
     @staticmethod
     def save(profiles: dict) -> None:
+        to_write = {}
+        for alias, prof in profiles.items():
+            prof = dict(prof)
+            if prof.get("pass") and ProfileManager._store_password(alias, prof["pass"]):
+                prof["pass"] = ""
+                prof["pass_in_keyring"] = True
+            to_write[alias] = prof
         try:
-            with open(CONFIG_FILE, "w") as f:
-                json.dump(profiles, f, indent=4)
+            fd = os.open(CONFIG_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as f:
+                json.dump(to_write, f, indent=4)
         except OSError as e:
             raise RuntimeError(f"Impossibile salvare i profili in {CONFIG_FILE}: {e}") from e
 
@@ -264,7 +337,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.sftp_manager = SftpManager()
         self.profiles = ProfileManager.load()
-        self.full_list_cache: list[QListWidgetItem] = []
+        self.full_list_cache: list[tuple[str, bool, str, str]] = []
+        self._workers: set[QThread] = set()
+        self._nav_token: int = 0
         self._init_ui()
         self._refresh_profile_list()
         self._check_for_updates(silent=True)
@@ -276,35 +351,7 @@ class MainWindow(QMainWindow):
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
         style = self.style()
-        self.setStyleSheet("""
-            QMainWindow { background-color: #f5f6fa; }
-            QFrame#Sidebar { background-color: #1f2a38; border-right: 1px solid #10151c; }
-            QListWidget#ProfileList { background: transparent; border: none; color: #ecf0f1; font-size: 13px; outline: none; }
-            QListWidget#ProfileList::item { padding: 8px 12px; border-radius: 6px; margin: 2px 8px; }
-            QListWidget#ProfileList::item:hover { background-color: #2c3e50; }
-            QListWidget#ProfileList::item:selected { background-color: #2980b9; color: white; }
-            QLabel#Title { color: #ecf0f1; font-weight: 600; padding: 14px 12px 8px 12px; font-size: 12px; letter-spacing: 1px; }
-            QFrame#ConnPanel { background: white; border: 1px solid #e1e4e8; border-radius: 8px; }
-            QLineEdit { padding: 7px 10px; border: 1px solid #d0d5dd; border-radius: 6px; background: white; }
-            QLineEdit:focus { border: 1px solid #2980b9; }
-            QPushButton { padding: 7px 14px; border-radius: 6px; border: none; background-color: #dfe4ea; }
-            QPushButton:hover { background-color: #ced6e0; }
-            QPushButton:disabled { background-color: #eceff3; color: #a8b0bb; }
-            QPushButton#Primary { background-color: #27ae60; color: white; font-weight: 600; }
-            QPushButton#Primary:hover { background-color: #219150; }
-            QPushButton#Secondary { background-color: #2980b9; color: white; }
-            QPushButton#Secondary:hover { background-color: #2574a9; }
-            QPushButton#Danger { background-color: #c0392b; color: white; }
-            QPushButton#Danger:hover { background-color: #a93226; }
-            QListWidget { background: white; border: 1px solid #e1e4e8; border-radius: 6px; padding: 4px; outline: none; }
-            QListWidget::item { padding: 6px 8px; border-radius: 4px; }
-            QListWidget::item:hover { background-color: #eef2f7; }
-            QListWidget::item:selected { background-color: #d6e9f8; color: #1a1a1a; }
-            QToolButton { border: none; padding: 5px; border-radius: 5px; }
-            QToolButton:hover { background-color: #e1e8ee; }
-            QToolButton:disabled { color: #c2c9d1; }
-            QScrollArea#BreadcrumbArea { border: none; background: white; }
-        """)
+        self.setStyleSheet(styles.STYLE_SHEET)
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -444,6 +491,10 @@ class MainWindow(QMainWindow):
     def _save_profile(self) -> None:
         alias = self.txt_alias.text().strip()
         if not alias: return
+        if alias in self.profiles and QMessageBox.question(
+            self, "Conferma", f"Il profilo '{alias}' esiste già. Sovrascriverlo?"
+        ) != QMessageBox.StandardButton.Yes:
+            return
         self.profiles[alias] = {"host": self.txt_host.text(), "user": self.txt_user.text(), "pass": self.txt_pass.text()}
         try:
             ProfileManager.save(self.profiles)
@@ -465,7 +516,8 @@ class MainWindow(QMainWindow):
         dlg.show()
 
         worker = TaskWorker(fn)
-        self._bg_worker = worker  # mantiene viva la referenza finché il thread gira
+        self._workers.add(worker)
+        worker.finished.connect(lambda w=worker: self._workers.discard(w))
 
         def _ok(result):
             dlg.close()
@@ -490,7 +542,8 @@ class MainWindow(QMainWindow):
         dlg.show()
 
         worker = TransferWorker(task_fn)
-        self._bg_worker = worker
+        self._workers.add(worker)
+        worker.finished.connect(lambda w=worker: self._workers.discard(w))
 
         def _progress(label: str, pct: int):
             dlg.setLabelText(label); dlg.setValue(max(0, min(100, pct)))
@@ -529,13 +582,18 @@ class MainWindow(QMainWindow):
     def refresh_list(self) -> None:
         path = self.sftp_manager.current_remote_path
         style = self.style()
+        self._nav_token += 1
+        token = self._nav_token
 
         def _fetch():
             items = self.sftp_manager.list_dir(path)
             items.sort(key=lambda x: (not stat.S_ISDIR(x.st_mode), x.filename.lower()))
-            return [(i.filename, stat.S_ISDIR(i.st_mode), utils.format_permissions(i.st_mode)) for i in items]
+            return [(i.filename, stat.S_ISDIR(i.st_mode), utils.format_permissions(i.st_mode),
+                     "-" if stat.S_ISDIR(i.st_mode) else utils.format_size(i.st_size or 0)) for i in items]
 
         def _on_ok(rows):
+            if token != self._nav_token:
+                return
             self.file_list.clear(); self.full_list_cache = []
             self._set_breadcrumb(path)
             self.btn_up_dir.setEnabled(path != "/")
@@ -545,10 +603,10 @@ class MainWindow(QMainWindow):
                 self.file_list.addItem(item)
             dir_icon = style.standardIcon(QStyle.StandardPixmap.SP_DirIcon)
             file_icon = style.standardIcon(QStyle.StandardPixmap.SP_FileIcon)
-            for filename, is_dir, perms in rows:
-                li = QListWidgetItem(dir_icon if is_dir else file_icon, f"{filename}   [{perms}]")
+            for filename, is_dir, perms, size in rows:
+                li = QListWidgetItem(dir_icon if is_dir else file_icon, f"{filename}   [{perms}]   {size}")
                 li.setData(Qt.ItemDataRole.UserRole, filename); li.setData(ROLE_IS_DIR, is_dir)
-                self.file_list.addItem(li); self.full_list_cache.append(li)
+                self.file_list.addItem(li); self.full_list_cache.append((filename, is_dir, perms, size))
 
         self._run_async(_fetch, on_success=_on_ok,
                          on_error=lambda m: QMessageBox.warning(self, "Errore", m),
@@ -592,9 +650,15 @@ class MainWindow(QMainWindow):
 
     def _filter_list(self, text: str) -> None:
         q = text.lower()
+        style = self.style()
+        dir_icon = style.standardIcon(QStyle.StandardPixmap.SP_DirIcon)
+        file_icon = style.standardIcon(QStyle.StandardPixmap.SP_FileIcon)
         self.file_list.clear()
-        for i in self.full_list_cache:
-            if q in i.data(Qt.ItemDataRole.UserRole).lower(): self.file_list.addItem(QListWidgetItem(i))
+        for filename, is_dir, perms, size in self.full_list_cache:
+            if q in filename.lower():
+                li = QListWidgetItem(dir_icon if is_dir else file_icon, f"{filename}   [{perms}]   {size}")
+                li.setData(Qt.ItemDataRole.UserRole, filename); li.setData(ROLE_IS_DIR, is_dir)
+                self.file_list.addItem(li)
 
     def _on_item_double_clicked(self, item: QListWidgetItem) -> None:
         name = item.data(Qt.ItemDataRole.UserRole)
@@ -605,7 +669,8 @@ class MainWindow(QMainWindow):
             self._download_and_open(name)
 
     def _download_and_open(self, name: str) -> None:
-        local = os.path.join(tempfile.gettempdir(), name)
+        fd, local = tempfile.mkstemp(prefix="pyexplorer_", suffix=os.path.splitext(name)[1])
+        os.close(fd)
         remote = posixpath.join(self.sftp_manager.current_remote_path, name)
 
         def _task(emit):
@@ -637,6 +702,12 @@ class MainWindow(QMainWindow):
     def _edit_remote(self, name: str) -> None:
         p = posixpath.join(self.sftp_manager.current_remote_path, name)
 
+        def _read():
+            info = self.sftp_manager.get_info(p)
+            if info.st_size and info.st_size > 1_000_000:
+                raise ValueError("File troppo grande per l'editor integrato (max 1 MB).")
+            return self.sftp_manager.read_text_file(p)
+
         def _open_editor(content: str):
             d = EditorDialog(name, content, self)
             if d.exec() == QDialog.DialogCode.Accepted:
@@ -648,7 +719,7 @@ class MainWindow(QMainWindow):
                     busy_text="Salvataggio in corso...")
 
         self._run_async(
-            lambda: self.sftp_manager.read_text_file(p), on_success=_open_editor,
+            _read, on_success=_open_editor,
             on_error=lambda m: QMessageBox.critical(self, "Errore", f"Impossibile leggere il file.\n{m}"),
             busy_text="Apertura file...")
 
@@ -688,14 +759,16 @@ class MainWindow(QMainWindow):
 
         def _do_delete():
             for path, is_dir in targets:
-                self.sftp_manager.delete(path, is_dir)
+                if is_dir:
+                    self.sftp_manager.delete_recursive(path)
+                else:
+                    self.sftp_manager.delete(path, is_dir)
 
         def _on_error(msg: str):
             # Avvisa l'utente senza far crashare il software
             full_msg = (f"Impossibile completare l'eliminazione.\n"
                         f"Dettagli errore: {msg}\n\n"
-                        f"Nota: tramite SFTP non è possibile eliminare cartelle che contengono file "
-                        f"oppure potresti non avere i permessi di scrittura in questo percorso.")
+                        f"Nota: potresti non avere i permessi di scrittura in questo percorso.")
             QMessageBox.critical(self, "Errore di Eliminazione", full_msg)
 
         self._run_async(_do_delete, on_success=lambda _: self.refresh_list(), on_error=_on_error,
@@ -741,17 +814,19 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "Update", f"Impossibile verificare gli aggiornamenti.\n{err}")
             return
         if av and QMessageBox.question(self, "Update", f"v{v} disponibile. Scaricare?") == QMessageBox.StandardButton.Yes:
-            # Definiamo l'URL del tuo sito web
-            sito_download = "https://mindnetwork.vip/download"
-
-            # Apriamo il browser dell'utente direttamente sul tuo portale
-            QDesktopServices.openUrl(QUrl(sito_download))
+            url = u or f"https://github.com/{GITHUB_REPO}/releases/latest"
+            QDesktopServices.openUrl(QUrl(url))
         elif not s:
             QMessageBox.information(self, "Update", "Sei all'ultima versione.")
 
     def closeEvent(self, e) -> None:
-        self.sftp_manager.disconnect(); e.accept()
+        try:
+            self.sftp_manager.disconnect()
+        except Exception:
+            logger.exception("Errore durante la disconnessione")
+        e.accept()
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     app = QApplication(sys.argv); app.setStyle("Fusion")
     w = MainWindow(); w.show(); sys.exit(app.exec())

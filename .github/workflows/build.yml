@@ -37,25 +37,23 @@ jobs:
     - name: Installazione Librerie
       run: |
         python -m pip install --upgrade pip
-        pip install PyQt6 paramiko pyinstaller requests
+        pip install -r requirements.txt pyinstaller
 
     - name: Creazione Cartella Eseguibile (PyInstaller)
       shell: bash
       run: |
         ICON_ARGS=""
-        if [ -f "icon.ico" ]; then
-          ICON_ARGS="--icon=icon.ico --add-data icon.ico;."
-          echo "Trovata icon.ico: la includo nella build."
-        else
-          echo "Nessuna icona trovata: eseguo la build standard senza icona."
+        if [ -f "icon.png" ]; then
+          ICON_ARGS="--icon=icon.png --add-data icon.png;."
+          echo "Trovata icon.png: la includo nella build."
         fi
         pyinstaller --onedir --noconsole --name=PyExplorer $ICON_ARGS --add-data "version.txt;." src/main.py
 
     - name: Creazione script Inno Setup (.iss)
       run: |
         $iconLine = ""
-        if (Test-Path "icon.ico") {
-            $iconLine = "SetupIconFile=icon.ico"
+        if (Test-Path "icon.png") {
+            $iconLine = "SetupIconFile=icon.png"
         }
 
         $issContent = @"
@@ -69,7 +67,7 @@ jobs:
         OutputBaseFilename=PyExplorer_Setup_v$env:VERSION
         Compression=lzma2
         SolidCompression=yes
-        PrivilegesRequired=admin
+        PrivilegesRequired=lowest
         $iconLine
 
         [Files]
@@ -124,18 +122,16 @@ jobs:
     - name: Installazione Librerie
       run: |
         python -m pip install --upgrade pip
-        pip install PyQt6 paramiko pyinstaller requests
+        pip install -r requirements.txt pyinstaller
 
     - name: Creazione Eseguibile Linux (PyInstaller)
       shell: bash
       run: |
         ICON_ARGS=""
-        if [ -f "icon.ico" ]; then
+        if [ -f "icon.png" ]; then
           # Nota: Su Linux si usa i due punti ':' per separare i path in --add-data
-          ICON_ARGS="--icon=icon.ico --add-data icon.ico:."
-          echo "Trovata icon.ico: la includo nella build."
-        else
-          echo "Nessuna icona trovata: eseguo la build standard senza icona."
+          ICON_ARGS="--icon=icon.png --add-data icon.png:."
+          echo "Trovata icon.png: la includo nella build."
         fi
         pyinstaller --onedir --noconsole --name=PyExplorer $ICON_ARGS --add-data "version.txt:." src/main.py
 
@@ -167,9 +163,9 @@ jobs:
 
         # 4. Gestione dinamica dell'icona per Linux
         ICON_LINE=""
-        if [ -f "icon.ico" ]; then
+        if [ -f "icon.png" ]; then
           mkdir -p $DEB_DIR/usr/share/icons/hicolor/256x256/apps
-          convert icon.ico[0] -resize 256x256 $DEB_DIR/usr/share/icons/hicolor/256x256/apps/pyexplorer.png || true
+          convert icon.png -resize 256x256 $DEB_DIR/usr/share/icons/hicolor/256x256/apps/pyexplorer.png || true
           ICON_LINE="Icon=pyexplorer"
         fi
 

@@ -17,13 +17,13 @@ Delete: Manage remote storage directly from the UI.
 
 Context Menu: Right-click support for all major file operations.
 
-Multi-language Support: Available in English, Italian.
+Secure by default: SSH host keys are verified against a persistent known_hosts (TOFU), and passwords are stored in the OS keyring (with encrypted-file fallback, written with 0600 permissions) instead of plain text.
 
 🛠️ Requirements
 To run PyExplorer, you need Python installed on your system along with the following libraries:
 
 Bash
-pip install PyQt6 paramiko
+pip install -r requirements.txt
 🚀 How to Use
 Clone the repository (or download the code).
 
@@ -41,7 +41,7 @@ Enrico Martini - Lead Developer
 GitHub: enkas79
 
 📝 Version
-Current Version: 1.0.3
+Current Version: 1.7.0
 
 📄 License
 This project is licensed under the MIT License.
