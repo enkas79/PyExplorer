@@ -37,23 +37,30 @@ jobs:
     - name: Installazione Librerie
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt pyinstaller
+        pip install -r requirements.txt pyinstaller pillow
+
+    - name: Conversione icona PNG -> ICO
+      shell: bash
+      run: |
+        if [ -f "icon.png" ]; then
+          python -c "from PIL import Image; Image.open('icon.png').convert('RGBA').save('icon.ico', sizes=[(256, 256)])"
+        fi
 
     - name: Creazione Cartella Eseguibile (PyInstaller)
       shell: bash
       run: |
         ICON_ARGS=""
-        if [ -f "icon.png" ]; then
-          ICON_ARGS="--icon=icon.png --add-data icon.png;."
-          echo "Trovata icon.png: la includo nella build."
+        if [ -f "icon.ico" ]; then
+          ICON_ARGS="--icon=icon.ico --add-data icon.png;."
+          echo "Trovata icona: la includo nella build."
         fi
         pyinstaller --onedir --noconsole --name=PyExplorer $ICON_ARGS --add-data "version.txt;." src/main.py
 
     - name: Creazione script Inno Setup (.iss)
       run: |
         $iconLine = ""
-        if (Test-Path "icon.png") {
-            $iconLine = "SetupIconFile=icon.png"
+        if (Test-Path "icon.ico") {
+            $iconLine = "SetupIconFile=icon.ico"
         }
 
         $issContent = @"
